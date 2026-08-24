@@ -11,6 +11,7 @@ export type MessageResponse = {
   content: string; // 메시지 내용
   fileId: number | null; // 첨부파일아이디 (IMAGE 메시지일 때만 존재)
   sentAt: string; // 발송일시 (ISO 문자열)
+  realFilePath?: string; // 실제 파일경로
 };
 
 /** 클라이언트가 보낼 수 있는 메시지 유형 — SYSTEM은 서버 전용이라 제외 */

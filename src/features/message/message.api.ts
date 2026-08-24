@@ -1,4 +1,4 @@
-import { get, post } from "@/util/AxiosUtil";
+import { get, post, postForm } from "@/util/AxiosUtil";
 import { MessageResponse, MessageSendRequest } from "./message.type";
 
 /**

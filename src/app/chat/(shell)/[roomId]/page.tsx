@@ -8,6 +8,8 @@ import {
   useSendMessageMutation,
 } from "@/features/message/message.query";
 import { useRoomDetailQuery } from "@/features/room/room.query";
+import { useFileUploadMutation } from "@/features/common/file/file.mutation";
+import Image from "next/image";
 
 function formatTime(ts: string) {
   return new Date(ts).toLocaleTimeString("ko-KR", {
@@ -17,6 +19,8 @@ function formatTime(ts: string) {
 }
 
 export default function ChatRoomPage() {
+  const [file, setFile] = useState<File | null>(null);
+
   const params = useParams();
   const roomId = params.roomId as string;
 
@@ -25,7 +29,14 @@ export default function ChatRoomPage() {
   const messages = data?.pages.flatMap((page) => page).reverse();
   const { data: room } = useRoomDetailQuery(Number(roomId));
 
-  const { mutate: sendMessage } = useSendMessageMutation(Number(roomId));
+  const { mutate: sendMessage, isPending: isSending } = useSendMessageMutation(
+    Number(roomId),
+  );
+
+  const { mutate: fileUpload, isPending: isUploading } =
+    useFileUploadMutation();
+
+  const isBusy: boolean = isSending || isUploading;
 
   const [text, setText] = useState<string>("");
 
@@ -36,15 +47,21 @@ export default function ChatRoomPage() {
   // 스크롤 최하단으로 가기위한 ref
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // input="file" 을 제어하기 위한 ref
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages?.length]);
 
   useEffect(() => {
+    // 다음페이지가 없으면 return
     if (!hasNextPage) return;
 
+    // IntersectionObserver : 특정요소가 특정 영역(root)안에 들어오는지를 감시하는 브라우저 내장 API
     const observer = new IntersectionObserver(
       ([entry]) => {
+        // sentinel이 root 안에 보이거나 이미 다음 페이지를 불러오는 중이 아니라면 다음 페이지 호출
         if (entry.isIntersecting && !isFetchingNextPage) {
           fetchNextPage();
         }
@@ -67,16 +84,45 @@ export default function ChatRoomPage() {
   }
 
   const handleSend = () => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
+    if (isBusy) return;
 
-    sendMessage(
-      {
-        messageType: "TEXT",
-        content: trimmed,
-      },
-      { onSuccess: () => setText("") },
-    );
+    // 파일이 있으면 파일 업로드 후 메시지 전송 호출
+    if (file) {
+      fileUpload(file, {
+        onSuccess: (res) => {
+          sendMessage(
+            {
+              messageType: "IMAGE",
+              content: text,
+              fileId: res.data.fileId,
+            },
+            {
+              onSuccess: () => {
+                setText("");
+                setFile(null);
+              },
+            },
+          );
+        },
+        onError: (error) => {
+          // TODO
+          alert(error.message);
+        },
+      });
+      // 그외에는 메시지만 전송 호출
+    } else {
+      const trimed = text.trim();
+
+      if (!trimed) return;
+
+      sendMessage(
+        {
+          messageType: "TEXT",
+          content: trimed,
+        },
+        { onSuccess: () => setText("") },
+      );
+    }
   };
 
   const isGroup = room.roomType === "GROUP";
@@ -165,7 +211,21 @@ export default function ChatRoomPage() {
                       : "rounded-bl-[4px] bg-white text-[#0B1220]"
                   }`}
                 >
-                  <p>{msg.content}</p>
+                  {msg.realFilePath ? (
+                    <>
+                      <div className="relative h-[200px] w-[200px] overflow-hidden rounded-[12px]">
+                        <Image
+                          src={`${process.env.NEXT_PUBLIC_API_BASE_URL}${msg.realFilePath}`}
+                          alt="이미지"
+                          fill
+                          style={{ objectFit: "cover" }}
+                        />
+                      </div>
+                      {msg.content && <p>{msg.content}</p>}
+                    </>
+                  ) : (
+                    <p>{msg.content}</p>
+                  )}
                   <p
                     className={`mt-[2px] text-right text-[10px] ${
                       isMe ? "text-white/80" : "text-[#9AA3B2]"
@@ -184,11 +244,23 @@ export default function ChatRoomPage() {
       <div className="flex items-center gap-[10px] border-t border-[#E7EAF0] bg-white px-[16px] py-[12px]">
         <button
           type="button"
-          aria-label="이모지"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={isBusy}
+          aria-label="파일 첨부"
           className="flex size-[34px] shrink-0 cursor-pointer items-center justify-center rounded-full text-[#9AA3B2] hover:bg-[#F1F3F6]"
         >
           <Smile className="size-[19px]" />
         </button>
+        <input
+          type="file"
+          ref={fileInputRef}
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0] ?? null;
+            setFile(file);
+          }}
+        />
         <input
           value={text}
           onChange={(e) => setText(e.target.value)}
