@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Menu, Plus, Search, Users } from "lucide-react";
-import { useChatStore } from "@/store/chatStore";
 import { useRoomListQuery } from "@/features/room/room.query";
+import { subscribePresenceCount } from "@/util/StompUtil";
 
 function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString("ko-KR", {
@@ -19,6 +19,19 @@ export default function ChatSidebar() {
 
   const pathname = usePathname();
   const [query, setQuery] = useState("");
+
+  const [onlineUser, setOnlineUser] = useState<number>();
+
+  // TODO: /topic/presence/count 구독해서 실제 값으로 교체 (현재는 퍼블용 더미)
+
+  useEffect(() => {
+    const unsubscribe = subscribePresenceCount((body) => {
+      const { count } = JSON.parse(body);
+      setOnlineUser(count);
+    });
+
+    return unsubscribe;
+  }, []);
 
   return (
     <aside className="flex h-full w-full max-w-[360px] shrink-0 flex-col border-r border-[#E7EAF0] bg-white">
@@ -110,6 +123,18 @@ export default function ChatSidebar() {
             검색 결과가 없어요
           </p>
         )}
+      </div>
+
+      <div className="flex shrink-0 items-center gap-[8px] border-t border-[#E7EAF0] px-[16px] py-[12px]">
+        <span className="relative flex size-[8px] shrink-0">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#4ADE80] opacity-75" />
+          <span className="relative inline-flex size-[8px] rounded-full bg-[#22C55E]" />
+        </span>
+        <p className="text-[13px] text-[#5B6472]">
+          현재{" "}
+          <span className="font-semibold text-[#0B1220]">{onlineUser}</span>명
+          접속 중
+        </p>
       </div>
     </aside>
   );

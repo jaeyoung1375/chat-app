@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import styles from "./page.module.css";
 import { post, setAccessToken } from "@/util/AxiosUtil";
+import { connectStomp } from "@/util/StompUtil";
 
 interface RefreshResponse {
   accessToken: string;
@@ -21,6 +22,7 @@ export default function Home() {
       .then(({ data }) => {
         if (!active || !data) return;
         setAccessToken(data.accessToken);
+        connectStomp();
         router.replace("/chat");
       })
       .catch(() => {

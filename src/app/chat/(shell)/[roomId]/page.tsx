@@ -2,13 +2,24 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { MoreVertical, Phone, Search, Send, Smile } from "lucide-react";
+import {
+  MoreHorizontal,
+  MoreVertical,
+  Phone,
+  Search,
+  Send,
+  Smile,
+} from "lucide-react";
+import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import {
   useMessageListQuery,
   useSendMessageMutation,
 } from "@/features/message/message.query";
+import type { MessageResponse } from "@/features/message/message.type";
 import { useRoomDetailQuery } from "@/features/room/room.query";
+import type { RoomListItemResponse } from "@/features/room/room.type";
 import { useFileUploadMutation } from "@/features/common/file/file.mutation";
+import { publishTyping, subscribeRoom } from "@/util/StompUtil";
 import Image from "next/image";
 
 function formatTime(ts: string) {
@@ -21,8 +32,15 @@ function formatTime(ts: string) {
 export default function ChatRoomPage() {
   const [file, setFile] = useState<File | null>(null);
 
+  // 내 메시지 말풍선 옆 "..." 버튼을 눌렀을 때 열리는 수정/삭제 메뉴의 대상 메시지 id
+  const [openMenuId, setOpenMenuId] = useState<number | null>(null);
+
+  // 현재 열려있는 메뉴 컨테이너(버튼 + 드롭다운)를 가리킴 - 바깥 클릭 감지용
+  const menuRef = useRef<HTMLDivElement>(null);
+
   const params = useParams();
   const roomId = params.roomId as string;
+  const queryClient = useQueryClient();
 
   const { data, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useMessageListQuery(Number(roomId));
@@ -50,9 +68,32 @@ export default function ChatRoomPage() {
   // input="file" 을 제어하기 위한 ref
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [typingUser, setTypingUser] = useState<string | null>(null);
+
+  // 현재 타이핑 하고 있는지 체크하기 위한 ref
+  const isTypingRef = useRef(false);
+
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [count, setCount] = useState<number>();
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages?.length]);
+
+  // openMenuId가 열려있는 동안 메뉴 바깥을 클릭하면 닫기
+  useEffect(() => {
+    if (openMenuId === null) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpenMenuId(null);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [openMenuId]);
 
   useEffect(() => {
     // 다음페이지가 없으면 return
@@ -74,6 +115,81 @@ export default function ChatRoomPage() {
 
     return () => observer.disconnect();
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeRoom(roomId, {
+      onMessage: (body) => {
+        const newMessage: MessageResponse = JSON.parse(body);
+
+        queryClient.setQueriesData<InfiniteData<MessageResponse[]>>(
+          { queryKey: ["rooms", Number(roomId), "messages"] },
+          (old) => {
+            if (!old) return old;
+            const [firstPage, ...restPages] = old.pages;
+            return {
+              ...old,
+              pages: [[newMessage, ...firstPage], ...restPages],
+            };
+          },
+        );
+
+        queryClient.setQueryData<RoomListItemResponse[]>(
+          ["rooms", "list"],
+          (old) =>
+            old?.map((r) =>
+              r.roomId === Number(roomId)
+                ? {
+                    ...r,
+                    lastMessageContent: newMessage.content,
+                    lastMessageAt: newMessage.sentAt,
+                  }
+                : r,
+            ),
+        );
+      },
+      onRead: () => {},
+      onTyping: (body) => {
+        const payload = JSON.parse(body);
+        if (payload.senderId === Number(2)) return;
+        console.log(payload);
+
+        setTypingUser(payload.typing ? payload.userId : null);
+      },
+    });
+
+    return unsubscribe;
+  }, [roomId, queryClient]);
+
+  const handleTextChange = (value: string) => {
+    setText(value);
+
+    if (!isTypingRef.current) {
+      isTypingRef.current = true;
+      try {
+        publishTyping(Number(roomId), true);
+      } catch {}
+    }
+
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => {
+      isTypingRef.current = false;
+      try {
+        publishTyping(Number(roomId), false);
+      } catch {}
+    }, 2000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      if (isTypingRef.current) {
+        isTypingRef.current = false;
+        try {
+          publishTyping(Number(roomId), false);
+        } catch {}
+      }
+    };
+  }, [roomId]);
 
   if (!room) {
     return (
@@ -142,7 +258,11 @@ export default function ChatRoomPage() {
             {room.roomName}
           </p>
           <p className="truncate text-[12px] text-[#9AA3B2]">
-            {isGroup ? `${room.members.length}명 참여 중` : "최근 접속"}
+            {typingUser
+              ? `${typingUser}님이 입력 중...`
+              : isGroup
+                ? `${room.members.length}명 참여 중`
+                : "최근 접속"}
           </p>
         </div>
         <div className="flex items-center gap-[4px] text-[#8A94A6]">
@@ -204,6 +324,47 @@ export default function ChatRoomPage() {
                 key={msg.messageId}
                 className={`flex ${isMe ? "justify-end" : "justify-start"}`}
               >
+                {isMe && (
+                  <div
+                    ref={openMenuId === msg.messageId ? menuRef : undefined}
+                    className="relative mr-[6px] self-center"
+                  >
+                    <button
+                      type="button"
+                      aria-label="메시지 옵션"
+                      onClick={() =>
+                        setOpenMenuId((prev) =>
+                          prev === msg.messageId ? null : msg.messageId,
+                        )
+                      }
+                      className="flex size-[26px] cursor-pointer items-center justify-center rounded-full text-[#9AA3B2] hover:bg-[#E7EAF0]"
+                    >
+                      <MoreHorizontal className="size-[16px]" />
+                    </button>
+                    {openMenuId === msg.messageId && (
+                      <div className="absolute right-0 top-[30px] z-10 w-[88px] overflow-hidden rounded-[10px] border border-[#E7EAF0] bg-white shadow-md">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // TODO: 메시지 수정 기능 구현 (msg.messageId, msg.content 사용)
+                          }}
+                          className="block w-full px-[12px] py-[8px] text-left text-[13px] text-[#0B1220] hover:bg-[#F1F3F6]"
+                        >
+                          수정
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // TODO: 메시지 삭제 기능 구현 (msg.messageId 사용)
+                          }}
+                          className="block w-full px-[12px] py-[8px] text-left text-[13px] text-[#E35D5D] hover:bg-[#F1F3F6]"
+                        >
+                          삭제
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div
                   className={`max-w-[65%] rounded-[16px] px-[14px] py-[9px] text-[14px] shadow-sm ${
                     isMe
@@ -263,7 +424,7 @@ export default function ChatRoomPage() {
         />
         <input
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => handleTextChange(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") handleSend();
           }}
