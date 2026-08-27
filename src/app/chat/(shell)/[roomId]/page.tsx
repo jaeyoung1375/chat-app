@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   MoreHorizontal,
   MoreVertical,
@@ -16,11 +16,15 @@ import {
   useSendMessageMutation,
 } from "@/features/message/message.query";
 import type { MessageResponse } from "@/features/message/message.type";
-import { useRoomDetailQuery } from "@/features/room/room.query";
+import {
+  useLeaveRoomMutation,
+  useRoomDetailQuery,
+} from "@/features/room/room.query";
 import type { RoomListItemResponse } from "@/features/room/room.type";
 import { useFileUploadMutation } from "@/features/common/file/file.mutation";
 import { publishTyping, subscribeRoom } from "@/util/StompUtil";
 import Image from "next/image";
+import { useAuthStore } from "@/store/useAuthStore";
 
 function formatTime(ts: string) {
   return new Date(ts).toLocaleTimeString("ko-KR", {
@@ -38,9 +42,15 @@ export default function ChatRoomPage() {
   // 현재 열려있는 메뉴 컨테이너(버튼 + 드롭다운)를 가리킴 - 바깥 클릭 감지용
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // 헤더 "더보기" 버튼 -> 채팅방 나가기 확인 모달 표시 여부
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+
   const params = useParams();
   const roomId = params.roomId as string;
   const queryClient = useQueryClient();
+  const router = useRouter();
+
+  const { mutate: leaveRoom, isPending: isLeaving } = useLeaveRoomMutation();
 
   const { data, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useMessageListQuery(Number(roomId));
@@ -74,8 +84,6 @@ export default function ChatRoomPage() {
   const isTypingRef = useRef(false);
 
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const [count, setCount] = useState<number>();
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
@@ -150,8 +158,7 @@ export default function ChatRoomPage() {
       onRead: () => {},
       onTyping: (body) => {
         const payload = JSON.parse(body);
-        if (payload.senderId === Number(2)) return;
-        console.log(payload);
+        if (payload.senderId === useAuthStore.getState().user?.userId) return;
 
         setTypingUser(payload.typing ? payload.userId : null);
       },
@@ -241,6 +248,17 @@ export default function ChatRoomPage() {
     }
   };
 
+  const handleLeaveRoom = () => {
+    leaveRoom(Number(roomId), {
+      onSuccess: () => {
+        router.replace("/chat");
+      },
+      onError: (error) => {
+        alert(error.message);
+      },
+    });
+  };
+
   const isGroup = room.roomType === "GROUP";
 
   return (
@@ -283,6 +301,7 @@ export default function ChatRoomPage() {
           <button
             type="button"
             aria-label="더보기"
+            onClick={() => setShowLeaveConfirm(true)}
             className="flex size-[34px] cursor-pointer items-center justify-center rounded-full hover:bg-[#F1F3F6]"
           >
             <MoreVertical className="size-[17px]" />
@@ -318,7 +337,7 @@ export default function ChatRoomPage() {
               );
             }
 
-            const isMe = msg.senderId === Number(1);
+            const isMe = msg.senderId === useAuthStore.getState().user?.userId;
             return (
               <div
                 key={msg.messageId}
@@ -440,6 +459,37 @@ export default function ChatRoomPage() {
           <Send className="size-[17px]" />
         </button>
       </div>
+
+      {showLeaveConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-[280px] rounded-[14px] bg-white p-[20px] shadow-lg">
+            <p className="text-[14px] font-semibold text-[#0B1220]">
+              채팅방을 나가시겠어요?
+            </p>
+            <p className="mt-[6px] text-[12px] text-[#8A94A6]">
+              나가면 이 채팅방의 대화 내용을 더 이상 볼 수 없어요.
+            </p>
+            <div className="mt-[16px] flex gap-[8px]">
+              <button
+                type="button"
+                onClick={() => setShowLeaveConfirm(false)}
+                disabled={isLeaving}
+                className="h-[36px] flex-1 cursor-pointer rounded-[8px] bg-[#F1F3F6] text-[13px] font-medium text-[#0B1220]"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={handleLeaveRoom}
+                disabled={isLeaving}
+                className="h-[36px] flex-1 cursor-pointer rounded-[8px] bg-[#E35D5D] text-[13px] font-medium text-white disabled:opacity-60"
+              >
+                나가기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

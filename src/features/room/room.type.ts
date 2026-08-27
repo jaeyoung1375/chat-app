@@ -25,3 +25,11 @@ export type RoomDetailResponse = {
   roomName: string | null; // 방이름 (GROUP만 존재, DIRECT는 null)
   members: RoomMemberResponse[]; // 참여자 목록 (나간 사람 제외)
 };
+
+/**
+ * POST /api/v1/rooms/direct 요청 바디.
+ * 백엔드 실제 계약 미확인 — 필드명(targetUserId) 확인 필요.
+ */
+export type DirectRoomCreateRequest = {
+  targetUserId: number; // 1:1 상대방 회원아이디
+};

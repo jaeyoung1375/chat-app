@@ -2,17 +2,32 @@
 
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
-
-// 퍼블용 샘플 데이터 — 실제 접속 상태 연동 전까지 정적으로 표시
-const onlineUsers = [
-  { id: "u1", name: "김민준" },
-  { id: "u2", name: "이서연" },
-  { id: "u3", name: "박지훈" },
-  { id: "u4", name: "최수아" },
-  { id: "u5", name: "정다은" },
-];
+import { useEffect, useMemo, useState } from "react";
+import { subscribePresenceCount } from "@/util/StompUtil";
+import { useUsersQuery } from "@/features/user/user.query";
+import { PresenceResponse } from "@/features/presence/presence.type";
 
 export default function OnlineUsersPage() {
+  const [onlineUser, setOnlineUser] = useState<number>();
+
+  const { data: users } = useUsersQuery();
+  const [userIds, setUserIds] = useState<number[]>([]);
+
+  useEffect(() => {
+    const unsubscribe = subscribePresenceCount((body) => {
+      console.log(body);
+      const { count, userIds } = JSON.parse(body) as PresenceResponse;
+      setOnlineUser(count);
+      setUserIds(userIds);
+    });
+
+    return unsubscribe;
+  }, []);
+
+  const memoUser = useMemo(() => {
+    return users?.filter((item) => userIds.includes(item.userId));
+  }, [users, userIds]);
+
   return (
     <div className="min-h-screen w-full bg-[#F4F8FF]">
       <div className="mx-auto w-full max-w-[480px] px-6 py-8">
@@ -27,15 +42,15 @@ export default function OnlineUsersPage() {
           <h1 className="text-[18px] font-semibold text-[#0B1220]">
             현재 접속인원
             <span className="ml-[6px] text-[13px] font-normal text-[#94A3B8]">
-              {onlineUsers.length}명
+              {onlineUser}명
             </span>
           </h1>
         </div>
 
         <div className="mt-[20px] flex flex-col gap-[8px]">
-          {onlineUsers.map((user) => (
+          {memoUser?.map((user) => (
             <div
-              key={user.id}
+              key={user.userId}
               className="flex items-center gap-[12px] rounded-[12px] border border-[#E2E8F0] bg-white p-[14px]"
             >
               <div className="relative shrink-0">

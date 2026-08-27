@@ -1,0 +1,5 @@
+{
+  "javascript.autoClosingTags": false,
+  "typescript.autoClosingTags": false,
+  "tailwindCSS.lint.suggestCanonicalClasses": "ignore"
+}

@@ -6,6 +6,8 @@ import Image from "next/image";
 import styles from "./page.module.css";
 import { post, setAccessToken } from "@/util/AxiosUtil";
 import { connectStomp } from "@/util/StompUtil";
+import { fetchMe } from "@/features/auth/auth.api";
+import { useAuthStore } from "@/store/useAuthStore";
 
 interface RefreshResponse {
   accessToken: string;
@@ -19,9 +21,12 @@ export default function Home() {
     let active = true;
 
     post<RefreshResponse>("/api/v1/auth/refresh")
-      .then(({ data }) => {
+      .then(async ({ data }) => {
         if (!active || !data) return;
         setAccessToken(data.accessToken);
+        const user = await fetchMe();
+        if (!active) return;
+        useAuthStore.getState().setUser(user);
         connectStomp();
         router.replace("/chat");
       })

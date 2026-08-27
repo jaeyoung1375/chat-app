@@ -1,26 +1,30 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ChevronLeft, Search } from "lucide-react";
-
-// 퍼블용 샘플 데이터 — 실제 유저 검색/초대 API 연동 전까지 정적으로 표시
-const candidates = [
-  { id: "u1", name: "김민준" },
-  { id: "u2", name: "이서연" },
-  { id: "u3", name: "박지훈" },
-  { id: "u4", name: "최수아" },
-  { id: "u5", name: "정다은" },
-];
+import { subscribePresenceCount } from "@/util/StompUtil";
+import { PresenceResponse } from "@/features/presence/presence.type";
+import { useUsersQuery } from "@/features/user/user.query";
+import { useAuthStore } from "@/store/useAuthStore";
+import { useCreateDirectRoomMutation } from "@/features/room/room.query";
+import { useRouter } from "next/navigation";
 
 type RoomType = "direct" | "group";
 
 export default function NewChatRoomPage() {
-  const [roomType, setRoomType] = useState<RoomType>("direct");
-  const [groupName, setGroupName] = useState("");
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const router = useRouter();
 
-  const toggleSelect = (id: string) => {
+  // 본인 userId 조회
+  const isMe = useAuthStore.getState().user?.userId;
+
+  const { mutate: createRoom } = useCreateDirectRoomMutation();
+
+  const [roomType, setRoomType] = useState<RoomType>("direct");
+  const [groupName, setGroupName] = useState<string>("");
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+
+  const toggleSelect = (id: number) => {
     if (roomType === "direct") {
       setSelectedIds((prev) => (prev[0] === id ? [] : [id]));
       return;
@@ -29,6 +33,31 @@ export default function NewChatRoomPage() {
       prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id],
     );
   };
+
+  const { data: users } = useUsersQuery();
+  const [userIds, setUserIds] = useState<number[]>([]);
+
+  const createDirectRoom = (userId: number) => {
+    createRoom(userId, {
+      onSuccess: (e) => {
+        router.push(`/chat/${e.data.roomId}`);
+      },
+    });
+  };
+
+  useEffect(() => {
+    const unsubscribe = subscribePresenceCount((body) => {
+      console.log(body);
+      const { userIds } = JSON.parse(body) as PresenceResponse;
+      setUserIds(userIds);
+    });
+
+    return unsubscribe;
+  }, []);
+
+  const memoUser = useMemo(() => {
+    return users?.filter((item) => userIds.includes(item.userId));
+  }, [users, userIds]);
 
   return (
     <div className="min-h-screen w-full bg-[#F4F8FF]">
@@ -47,6 +76,7 @@ export default function NewChatRoomPage() {
         </div>
 
         {/* 1:1 / 그룹 탭 */}
+        {/* TODO: 탭 공통 컴포넌트로 분리 */}
         <div className="mt-[20px] flex rounded-[10px] border border-[#E2E8F0] bg-white p-[4px]">
           <button
             type="button"
@@ -103,7 +133,9 @@ export default function NewChatRoomPage() {
           <p className="mb-[6px] text-[13px] font-medium text-[#0B1220]">
             참가자{" "}
             {roomType === "group" && selectedIds.length > 0 && (
-              <span className="text-[#2F80FF]">{selectedIds.length}명 선택됨</span>
+              <span className="text-[#2F80FF]">
+                {selectedIds.length}명 선택됨
+              </span>
             )}
           </p>
           <div className="relative">
@@ -118,42 +150,45 @@ export default function NewChatRoomPage() {
 
         {/* 참가자 목록 */}
         <div className="mt-[12px] flex flex-col gap-[8px]">
-          {candidates.map((user) => {
-            const isSelected = selectedIds.includes(user.id);
-            return (
-              <button
-                key={user.id}
-                type="button"
-                onClick={() => toggleSelect(user.id)}
-                className={`flex cursor-pointer items-center gap-[12px] rounded-[12px] border p-[12px] text-left transition-colors ${
-                  isSelected
-                    ? "border-[#2F80FF] bg-[#EAF2FE]"
-                    : "border-[#E2E8F0] bg-white"
-                }`}
-              >
-                <div className="flex size-[36px] shrink-0 items-center justify-center rounded-full bg-[#2F80FF] text-[13px] font-semibold text-white">
-                  {user.name.slice(0, 1)}
-                </div>
-                <p className="flex-1 text-[14px] font-medium text-[#0B1220]">
-                  {user.name}
-                </p>
-                <span
-                  className={`flex size-[20px] shrink-0 items-center justify-center rounded-full border text-[11px] text-white ${
+          {memoUser
+            ?.filter((item) => item.userId !== isMe)
+            .map((user) => {
+              const isSelected = selectedIds.includes(user.userId);
+              return (
+                <button
+                  key={user.userId}
+                  type="button"
+                  onClick={() => toggleSelect(user.userId)}
+                  className={`flex cursor-pointer items-center gap-[12px] rounded-[12px] border p-[12px] text-left transition-colors ${
                     isSelected
-                      ? "border-[#2F80FF] bg-[#2F80FF]"
+                      ? "border-[#2F80FF] bg-[#EAF2FE]"
                       : "border-[#E2E8F0] bg-white"
                   }`}
                 >
-                  {isSelected && "✓"}
-                </span>
-              </button>
-            );
-          })}
+                  <div className="flex size-[36px] shrink-0 items-center justify-center rounded-full bg-[#2F80FF] text-[13px] font-semibold text-white">
+                    {user.name.slice(0, 1)}
+                  </div>
+                  <p className="flex-1 text-[14px] font-medium text-[#0B1220]">
+                    {user.name}
+                  </p>
+                  <span
+                    className={`flex size-[20px] shrink-0 items-center justify-center rounded-full border text-[11px] text-white ${
+                      isSelected
+                        ? "border-[#2F80FF] bg-[#2F80FF]"
+                        : "border-[#E2E8F0] bg-white"
+                    }`}
+                  >
+                    {isSelected && "✓"}
+                  </span>
+                </button>
+              );
+            })}
         </div>
 
         {/* 만들기 버튼 — 퍼블 단계, 실제 생성 로직 미연결 */}
         <button
           type="button"
+          onClick={() => createDirectRoom(selectedIds[0])}
           disabled={selectedIds.length === 0}
           className="mt-[24px] h-[47px] w-full cursor-pointer rounded-[8px] bg-[#2F80FF] text-[15px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:bg-[#94A3B8]"
         >
