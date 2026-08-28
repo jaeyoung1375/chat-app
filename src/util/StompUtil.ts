@@ -3,6 +3,13 @@ import { getAccessToken } from "./AxiosUtil";
 
 let client: Client | null = null;
 
+// 재연결(onConnect) 시 다시 구독해야 하는 콜백들. subscribe 함수들이 add/delete로 등록·해제한다.
+const resubscribeCallbacks = new Set<() => void>();
+
+function handleReconnect() {
+  resubscribeCallbacks.forEach((cb) => cb());
+}
+
 export function connectStomp() {
   if (client) return;
 
@@ -14,6 +21,7 @@ export function connectStomp() {
     reconnectDelay: 5000,
     heartbeatIncoming: 4000,
     heartbeatOutgoing: 4000,
+    onConnect: handleReconnect,
   });
 
   client.activate();
@@ -38,63 +46,71 @@ export function subscribeRoom(
   roomId: string,
   handlers: RoomSubscriptionHandlers,
 ) {
-  const c = client;
-  if (!c) return () => {};
-
   let subs: StompSubscription[] = [];
 
   const subscribeAll = () => {
+    if (!client?.connected) return;
     subs = [
-      c.subscribe(`/topic/room/${roomId}`, (msg) =>
+      client.subscribe(`/topic/room/${roomId}`, (msg) =>
         handlers.onMessage(msg.body),
       ),
-      c.subscribe(`/topic/room/${roomId}/read`, (msg) =>
+      client.subscribe(`/topic/room/${roomId}/read`, (msg) =>
         handlers.onRead(msg.body),
       ),
-      c.subscribe(`/topic/room/${roomId}/typing`, (msg) =>
+      client.subscribe(`/topic/room/${roomId}/typing`, (msg) =>
         handlers.onTyping(msg.body),
       ),
     ];
   };
 
-  const prevOnConnect = c.onConnect;
-  c.onConnect = (frame) => {
-    prevOnConnect?.(frame);
-    subscribeAll();
-  };
-
-  if (c.connected) subscribeAll();
+  resubscribeCallbacks.add(subscribeAll);
+  subscribeAll();
 
   return () => {
     subs.forEach((s) => s.unsubscribe());
-    c.onConnect = prevOnConnect;
+    resubscribeCallbacks.delete(subscribeAll);
+  };
+}
+
+export function subscribeOnlyRoom(
+  roomId: string,
+  onMessage: (body: string) => void,
+) {
+  let subs: StompSubscription[] = [];
+
+  const subscribeAll = () => {
+    if (!client?.connected) return;
+    subs = [
+      client.subscribe(`/topic/room/${roomId}`, (msg) => onMessage(msg.body)),
+    ];
+  };
+
+  resubscribeCallbacks.add(subscribeAll);
+  subscribeAll();
+
+  return () => {
+    subs.forEach((s) => s.unsubscribe());
+    resubscribeCallbacks.delete(subscribeAll);
   };
 }
 
 export function subscribePresenceCount(onCount: (body: string) => void) {
-  const c = client;
-  if (!c) return () => {};
-
   let subs: StompSubscription[] = [];
 
-  const subscribe = () => {
+  const subscribeAll = () => {
+    if (!client?.connected) return;
     subs = [
-      c.subscribe(`/topic/presence/count`, (msg) => onCount(msg.body)),
-      c.subscribe(`/app/presence/count`, (msg) => onCount(msg.body)),
+      client.subscribe(`/topic/presence/count`, (msg) => onCount(msg.body)),
+      client.subscribe(`/app/presence/count`, (msg) => onCount(msg.body)),
     ];
   };
 
-  const prevOnConnect = c.onConnect;
-  c.onConnect = (frame) => {
-    prevOnConnect?.(frame);
-    subscribe();
-  };
-
-  if (c.connected) subscribe();
+  resubscribeCallbacks.add(subscribeAll);
+  subscribeAll();
 
   return () => {
     subs.forEach((s) => s.unsubscribe());
-    c.onConnect = prevOnConnect;
+    resubscribeCallbacks.delete(subscribeAll);
   };
 }
 
@@ -118,5 +134,17 @@ export function publishTyping(roomId: number, isTyping: boolean) {
     destination: `/app/rooms/${roomId}/typing`,
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ typing: isTyping }),
+  });
+}
+
+export function publishRead(roomId: number, body: unknown) {
+  if (!client?.connected) {
+    throw new Error("STOMP client is not connected");
+  }
+
+  client.publish({
+    destination: `/app/rooms/${roomId}/read`,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
   });
 }

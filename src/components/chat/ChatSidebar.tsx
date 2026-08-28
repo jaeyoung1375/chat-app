@@ -2,10 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Menu, Plus, Search, Users } from "lucide-react";
 import { useRoomListQuery } from "@/features/room/room.query";
-import { subscribePresenceCount } from "@/util/StompUtil";
+import { subscribeOnlyRoom, subscribePresenceCount } from "@/util/StompUtil";
+import { MessageResponse } from "@/features/message/message.type";
+import { useQueryClient } from "@tanstack/react-query";
+import { RoomListItemResponse } from "@/features/room/room.type";
 
 function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString("ko-KR", {
@@ -15,12 +18,56 @@ function formatTime(ts: number) {
 }
 
 export default function ChatSidebar() {
+  const queryClient = useQueryClient();
+
   const { data: rooms } = useRoomListQuery();
+  const roomList = rooms?.map((r) => r.roomId).join(",");
 
   const pathname = usePathname();
+  const pathRef = useRef(pathname);
   const [query, setQuery] = useState("");
 
   const [onlineUser, setOnlineUser] = useState<number>();
+
+  useEffect(() => {
+    if (!rooms) return;
+
+    // 각 rooms를 순회하면서 각 구독 + 안읽은메시지 수를 업데이트한다.
+    const unsubscribers = rooms.map((r) =>
+      subscribeOnlyRoom(String(r.roomId), (body) => {
+        const newMessage: MessageResponse = JSON.parse(body);
+        if (pathRef.current !== `/chat/${r.roomId}`) {
+          queryClient.setQueryData<RoomListItemResponse[]>(
+            ["rooms", "list"],
+            (old) =>
+              old?.map((r) =>
+                r.roomId === Number(newMessage.roomId)
+                  ? {
+                      ...r,
+                      unreadCount: r.unreadCount + 1,
+                    }
+                  : r,
+              ),
+          );
+        } else {
+          queryClient.setQueryData<RoomListItemResponse[]>(
+            ["rooms", "list"],
+            (old) =>
+              old?.map((r) =>
+                r.roomId === Number(newMessage.roomId)
+                  ? {
+                      ...r,
+                      unreadCount: 0,
+                    }
+                  : r,
+              ),
+          );
+        }
+      }),
+    );
+
+    return () => unsubscribers.forEach((unsub) => unsub());
+  }, [roomList]);
 
   // TODO: /topic/presence/count 구독해서 실제 값으로 교체 (현재는 퍼블용 더미)
 
@@ -32,6 +79,10 @@ export default function ChatSidebar() {
 
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    pathRef.current = pathname;
+  }, [pathname]);
 
   return (
     <aside className="flex h-full w-full max-w-[360px] shrink-0 flex-col border-r border-[#E7EAF0] bg-white">
@@ -109,6 +160,14 @@ export default function ChatSidebar() {
                     </span>
                   )}
                   */}
+                  {room.unreadCount > 0 && (
+                    <span
+                      className="flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-[#5B7FE3] px-[5px] text-[11px] font-sem
+ibold text-white"
+                    >
+                      {room.unreadCount > 99 ? "99+" : room.unreadCount}
+                    </span>
+                  )}
                 </div>
                 <p className="mt-[2px] truncate text-[13px] text-[#8A94A6]">
                   {lastMessage ?? "대화를 시작해보세요"}

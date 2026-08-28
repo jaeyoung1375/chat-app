@@ -22,7 +22,7 @@ import {
 } from "@/features/room/room.query";
 import type { RoomListItemResponse } from "@/features/room/room.type";
 import { useFileUploadMutation } from "@/features/common/file/file.mutation";
-import { publishTyping, subscribeRoom } from "@/util/StompUtil";
+import { publishRead, publishTyping, subscribeRoom } from "@/util/StompUtil";
 import Image from "next/image";
 import { useAuthStore } from "@/store/useAuthStore";
 
@@ -155,7 +155,7 @@ export default function ChatRoomPage() {
             ),
         );
       },
-      onRead: () => {},
+      onRead: (body) => {},
       onTyping: (body) => {
         const payload = JSON.parse(body);
         if (payload.senderId === useAuthStore.getState().user?.userId) return;
@@ -166,6 +166,19 @@ export default function ChatRoomPage() {
 
     return unsubscribe;
   }, [roomId, queryClient]);
+
+  useEffect(() => {
+    const latest = messages?.[messages.length - 1];
+    if (!latest) return;
+
+    publishRead(Number(roomId), { messageId: latest.messageId });
+
+    queryClient.setQueryData<RoomListItemResponse[]>(["rooms", "list"], (old) =>
+      old?.map((r) =>
+        r.roomId === Number(roomId) ? { ...r, unreadCount: 0 } : r,
+      ),
+    );
+  }, [data]);
 
   const handleTextChange = (value: string) => {
     setText(value);
